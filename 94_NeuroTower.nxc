@@ -1,0 +1,522 @@
+//время ожидания второго нажатия
+long timeToPress=0;
+
+//переменные с количеством выигрышей нейросетей
+long winNN1=0;
+long winNN2=0;
+
+//количество игр NN против NN (здесь и далее NN - нейросеть)
+long game=0;
+
+//сколько осталось кубиков в игре с человеком
+int box1 = 0;
+//сколько осталось кубиков в игре NN с NN
+int box2=0;
+
+//win это переменная обозначает чей-то выйгрыш
+//win2 это тоже самое, только в подпроцессе  learn
+int win1=0;
+int win2=0;
+
+//7 строк обозначают 7 строк экрана, мы в них храним то, что надо вывести
+string line1,line2,line3,line4,line5,line6,line7;
+
+//buttonPress это количество нажатий на кнопку
+int buttonPress=0;
+
+//ошибка и старая ошибка PD-регулятора
+int ERR = 0;
+int ERRo=0;
+
+//управляющее воздействие
+int u = 10;
+
+//коФф-ты PD регулятора
+float P = 0.5;
+float D = 1.5;
+
+//точка, которой мы хотим достичь при повороте мотора
+int target=0;
+
+//время для поворота влево или вправо
+long timeToMove=0;
+
+//два массива пуговиц NN1
+int white1[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+int black1[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+//два массива пуговиц NN2
+int white2[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+int black2[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+//три временных массива 2 для learn и 1 для main
+int tmp1[11];
+int tmp2[11];
+int tmp[11];
+
+//блок для поворота по регулятору налево
+sub Left (int raz)
+{
+  //устонавливаем точку, которой хотим достичь
+  target=MotorRotationCount(OUT_A)+360*raz;
+
+  //засекаем время
+  timeToMove=CurrentTick();
+
+  //цикл, работоющий пока мы не достигнем точки или времени
+  while(abs(MotorRotationCount(OUT_A)-target)>5 && CurrentTick()-timeToMove < 1000){
+    //с помощью регулятора подаем нагрузку на мотор
+    ERR=target-MotorRotationCount(OUT_A);
+    u=P*ERR+D*(ERR-ERRo);
+    if(u>100)u=100;
+    if(u<-100)u=-100;
+    OnFwd(OUT_A,u);
+    ERRo=ERR;
+  }
+
+  //выключаем мотор
+  Off(OUT_A);
+}
+
+//блок для поворота по регулятору направо
+sub Right(int raz)
+{
+  //устанавливаем точку, которой хотим достичь
+  timeToMove=CurrentTick();
+  
+  //засекаем время
+  target=MotorRotationCount(OUT_A)-360*raz;
+
+  //цикл, работающий пока мы не достигнем точки или времени
+  while(abs(MotorRotationCount(OUT_A)-target)>5 && CurrentTick()-timeToMove < 1000){
+    //с помощью регулятора подаем нагрузку на мотор
+    ERR=target-MotorRotationCount(OUT_A);
+    u=P*ERR+D*(ERR-ERRo);
+    if(u>100)u=100;
+    if(u<-100)u=-100;
+    OnFwd(OUT_A,u);
+    ERRo=ERR;
+  }
+
+  //выключаем мотор
+  Off(OUT_A);
+}
+
+//функция для подсчета нажатий на кнопки
+int touch(int sensor) {
+  //переменная, в которой мы храним количевство нажатий
+  int countPress=0;
+  //условие, проверяющее на каком датчике ждать нажатия
+  if(sensor==1){
+    //ожидание первого нажатия
+    while(Sensor(S1)==0){
+      Wait(1);
+    }
+    //защина от шума
+    Wait(100);
+    //ожидаем отжатия
+    while(Sensor(S1)!=0);
+    long timeToPress=CurrentTick();
+    //цикл, ожидающий второго нажатия заданое время
+    while(Sensor(S1)==0 && CurrentTick()-timeToPress < 1000);
+    //если вылетели не по времени, а по нажатию
+    if(CurrentTick()-timeToPress < 1000) {
+      //зашита от шума
+      Wait(100);
+      //устанавливаем количество нажатий в 2(0 - одно нажитие, 1 - два нажатие)
+      countPress=1;
+      //ожидаем отжатия
+      while(Sensor(S1)!=0);
+    }
+    //возвращаем значение
+    return countPress+1;
+  }
+  //если проверяется второй датчик
+  if(sensor==2){
+    //ожидаем нажатия
+    while(Sensor(S2)==0){
+      Wait(1);
+    }
+    //защита от шума
+    Wait(100);
+    //ожидание отжатия
+    while(Sensor(S2)!=0);
+    long timeToPress=CurrentTick();
+    //цикл, ожидающий второго нажатия заданое время
+    while(Sensor(S2)==0 && CurrentTick()-timeToPress < 1000);
+    //если вылетели не по времени, а по нажатию
+    if(CurrentTick()-timeToPress < 1000) {
+      //защита от шума
+      Wait(100);
+      //устанавливаем количество нажатий в 2
+      countPress=1;
+      //ожидаем отжатия
+      while(Sensor(S2)!=0);
+    }
+    //возвращаем значение
+    return countPress+1;
+  }
+
+// параллельный процесс для обучения нейронных сетей
+}
+task learn(){
+  Wait(2000);
+  //говорим "начало обучения нейронной сети"
+  PlayFile("start.rso");
+  Wait(2000);
+  //запоминаем время
+  long timeToLearn = CurrentTick();
+  //главный цикл
+  while(true)
+  {
+    //обнуляем tmp1 и tmp2
+    for(int i=0;i<=10;i++){
+      tmp1[i]=0;
+      tmp2[i]=0;
+    }
+    //если прошла секунда? (каждую секунду)
+    if(CurrentTick()-timeToLearn>=1000){
+      //вывод на экран  количевства игр и выигрышей
+      line1=NumToStr(game)+" "+NumToStr(winNN1)+" "+NumToStr(winNN2);
+      //вывод на экран выигрывающей нейросети
+      if(winNN1>=winNN2){
+        line2="HC1";
+      }
+      else{
+        line2="NC2";
+      }
+      //вывод строк
+      ClearScreen();
+      TextOut(0,LCD_LINE1,line1);
+      TextOut(0,LCD_LINE2,line2);
+      TextOut(0,LCD_LINE3,line3);
+      TextOut(0,LCD_LINE4,line4);
+      TextOut(0,LCD_LINE5,line5);
+      TextOut(0,LCD_LINE6,line6);
+      TextOut(0,LCD_LINE7,line7);
+      //очистка строк
+      line1 = "";
+      line2 = "";
+      line4 = "";
+      line6 = "";
+      line7 = "";
+      //перезаписываем время
+      timeToLearn = CurrentTick();
+    }
+    //увеличиваем число игр
+    game++;
+    //переменная кто выиграл
+    win2=0;
+    //сколько кубиков осталось
+    box2=11;
+
+    //цикл игры
+    while(true){
+
+      //ход НС2
+      //вытягиваем камень
+      if(Random(100) < white2[box2-1]*1.0/(white2[box2-1]+black2[box2-1])*100.0){
+        //запоминаем какой использовали коробок
+        tmp2[box2-1]=2;
+        //уменьшаем количество оставшихся кубиков в кучке
+        box2-=2;
+      }
+      else{
+        //запоминаем какой использовали коробок
+        tmp2[box2-1]=1;
+        //уменьшаем количество оставшихся кубиков в кучке
+        box2-=1;
+      }
+      //проверка на выигрыш
+      if(box2<=2){
+        win2=1;
+        break;
+      }
+
+      //ход НС1
+      //вытягиваем камень
+      if(Random(100) < white1[box2-1]*1.0/(white1[box2-1]+black1[box2-1])*100.0){
+        //запоминаем какой использовали коробок
+        tmp1[box2-1]=2;
+        //уменьшаем количество оставшихся кубиков в кучке
+        box2-=2;
+      }
+      else{
+        //запоминаем какой использовали коробок
+        tmp1[box2-1]=1;
+        //уменьшаем количество оставшихся кубиков в кучке
+        box2-=1;
+      }
+      //проверка на выигрыш
+      if(box2<=2){
+        win2=2;
+        break;
+      }
+
+    }
+    //поощрение-наказание
+    //NN1 выиграла
+    if(win2==1){
+      winNN1++;
+      for(int i = 0;i<=10;i++){
+        if(tmp1[i]==1) black1[i]++;
+        if(tmp1[i]==2) white1[i]++;
+      }
+    }
+    else{
+      for(int i = 0;i<=10;i++){
+        if (tmp1[i] > 0)
+        {
+          if(tmp1[i]==1 && black1[i]>1) black1[i]--;
+          if(tmp1[i]==2 && white1[i]>1) white1[i]--;
+          break;
+        }
+      }
+    }
+    //NN2
+    if(win2==2){
+      winNN2++;
+      for(int i = 0;i<=10;i++){
+        if(tmp2[i]==1) black2[i]++;
+        if(tmp2[i]==2) white2[i]++;
+      }
+    }
+    else{
+      for(int i = 0;i<=10;i++){
+        if (tmp2[i] > 0)
+        {
+          if(tmp2[i]==1 && black2[i]>1) black2[i]--;
+          if(tmp2[i]==2 && white2[i]>1) white2[i]--;
+          break;
+        }
+      }
+    }
+  }
+}
+
+task main()
+{
+  //подключаем датчики
+  SetSensorTouch(IN_1);
+  SetSensorTouch(IN_2);
+  ClearScreen();
+  line1 = "";
+  line2 = "";
+  line3 = "";
+  line4 = "";
+  line5 = "";
+  line6 = "";
+  line7 = "";
+
+  //делаем случайные числа действительно случайными
+  for(int i=0; i<=CurrentTick()%1000; i++) { int tmp_r = Random(); }
+
+  //сбрасываем tmp
+  for(int i=0;i<=10;i++){
+    tmp1[i]=0;
+    tmp2[i]=0;
+    tmp[i]= 0;
+  }
+  
+  //запуск параллельной задачи learn для обучения нейросетей
+  start learn;
+
+
+  //Ожидание нажатия на кнопки
+  line5="left 2 right 1";
+  while (!ButtonPressed(BTNRIGHT, true) && !ButtonPressed(BTNLEFT, true));
+  line5 = "";
+  // если нажат левый датчик, игра человек-человек
+  if(ButtonPressed(BTNLEFT, true))
+  {
+    //бесконечный цикл игры
+    while(true)
+    {
+      //сброс tmp
+      for(int i=0;i<=10;i++){
+        tmp[i]= 0;
+      }
+      //Кубиков 11
+      box1=11;
+      while(true)
+      {
+        //ход игрока1
+        buttonPress=touch(2);
+        //выкидываем столько кубиков, сколько нажатий
+        Left(buttonPress);
+        //запоминаем сколько выкинули
+        box1-=buttonPress;
+
+        line4=NumToStr(box1);
+        //проверка на выигрыш
+        if(box1<=2){
+          win1=1;
+          line3="Player1 Win";
+          break;
+        }
+        //ход игрока2
+        buttonPress=touch(1);
+        //выкидываем столько кубиков, сколько нажатий
+        Right(buttonPress);
+        //запоминаем сколько выкинули
+        box1-=buttonPress;
+
+        line4=NumToStr(box1);
+        if(box1<=2){
+          //проверка на выигрыш
+          win1=2;
+          line3="Player Win";
+          break;
+        }
+      }
+      //ожидания нажатия для новой игры(загрузка кубиков)
+      while (!ButtonPressed(BTNCENTER, true));
+      line3 = "";
+    }
+  }
+
+  //если нажат правый датчик, игра человек-NN
+  if(ButtonPressed(BTNRIGHT, true))
+  {
+    while(true)
+    {
+      //переменная кто выйграл
+      win1=0;
+      //сколько кубиков осталось
+      box1=11;
+      //рандомно определям первый ход
+      if (Random(100)>50)
+      {
+        //первый ходит человек
+        while(true){
+          //ход игрока
+          PlayFile("playerh.rso");
+          Wait(1000);
+          buttonPress=touch(2);
+          if(buttonPress==1) {
+            PlayFile("player1.rso");
+            Wait(2000);
+          }
+          else{
+            PlayFile("player2.rso");
+            Wait(2000);
+          }
+          //выкидываем кубики по количеству нажатий
+          Left(buttonPress);
+          box1-=buttonPress;
+          line4=NumToStr(box1);
+
+          //проверка на выигрыш
+          if(box1<=2){
+            PlayFile("networkw.rso");
+            Wait(2000);
+            win1=1;
+            line3="Robot Win";
+            break;
+          }
+          PlayFile("networkh.rso");
+          Wait(2000);
+          PlayFile("networkd.rso");
+          Wait(Random(10000)+2000);
+          
+          //ход НС
+          if(Random(100) < white1[box1-1]*1.0/(white1[box1-1]+black1[box1-1])*100.0){
+            PlayFile("network2.rso");
+            Wait(2000);
+            //берёт 2 кубика
+            Right(2);
+            box1-=2;
+          }
+          else{
+            PlayFile("network1.rso");
+            Wait(2000);
+            //берёт 1 кубик
+            Right(1);
+            box1-=1;
+          }
+
+          line4=NumToStr(box1);
+          
+          //проверка на выигрыш
+          if(box1<=2){
+            PlayFile("playerw.rso");
+            Wait(2000);
+            win1=2;
+            line3="Player Win";
+            break;
+          }
+        }
+      }
+      // если первой ходит NN
+      else
+      {
+        while(true){
+          //ход НС
+          if(Random(100) < white2[box1-1]*1.0/(white2[box1-1]+black2[box1-1])*100.0){
+            PlayFile("network2.rso");
+            Wait(2000);
+            //берёт 2 кубика
+            Right(2);
+            box1-=2;
+          }
+          else{
+            PlayFile("network1.rso");
+            Wait(2000);
+            // берёт 1 кубик
+            Right(1);
+            box1-=1;
+          }
+
+          line4=NumToStr(box1);
+          // проверка на выигрыш
+          if(box1<=2){
+            PlayFile("playerw.rso");
+            Wait(2000);
+            win1=2;
+            line3="Player Win";
+            break;
+          }
+
+          //ход игрока
+          PlayFile("playerh.rso");
+          Wait(1000);
+          buttonPress=touch(2);
+          if(buttonPress==1) {
+            PlayFile("player1.rso");
+            Wait(2000);
+          }
+          else{
+            PlayFile("player2.rso");
+            Wait(2000);
+          }
+          // выкидываем по количеству нажатий
+          Left(buttonPress);
+          box1-=buttonPress;
+          line4=NumToStr(box1);
+
+          //проверка на выигрыш
+          if(box1<=2){
+            PlayFile("networkw.rso");
+            Wait(2000);
+            win1=1;
+            line3="Robot Win";
+            break;
+          }
+          PlayFile("networkh.rso");
+          Wait(2000);
+          PlayFile("networkd.rso");
+          Wait(Random(10000)+2000);
+        }
+      }
+
+      // одидания нажатия для продолжения игры
+      PlayFile("networkl.rso");
+      Wait(3000);
+      PlayFile("next.rso");
+      Wait(2000);
+      while (!ButtonPressed(BTNCENTER, true));
+        line3 = "";
+      }
+    }
+  }
+}
